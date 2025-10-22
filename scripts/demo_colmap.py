@@ -507,22 +507,127 @@ def demo_fn(args):
 
         # Init pycolmap reconstruction
         t_start = time.time()
-        # ...existing BA code...
+        print("Converting to COLMAP format with BA...")
+        reconstruction, valid_track_mask = batch_np_matrix_to_pycolmap(
+            points_3d,
+            extrinsic,
+            intrinsic,
+            pred_tracks,
+            image_size,
+            masks=track_mask,
+            max_reproj_error=args.max_reproj_error,
+            shared_camera=shared_camera,
+            camera_type=args.camera_type,
+            points_rgb=points_rgb,
+        )
+
+        if reconstruction is None:
+            raise ValueError("No reconstruction can be built with BA")
+
+        # Bundle Adjustment
+        print("Running Bundle Adjustment...")
+        ba_options = pycolmap.BundleAdjustmentOptions()
+        pycolmap.bundle_adjustment(reconstruction, ba_options)
+
+        reconstruction_resolution = img_load_resolution
         timings["pycolmap_ba"] = time.time() - t_start
 
     else:
         t_start = time.time()
-        # ...existing non-BA reconstruction code...
+        conf_thres_value = args.conf_thres_value
+        max_points_for_colmap = 100000  # randomly sample 3D points
+        shared_camera = (
+            False  # in the feedforward manner, we do not support shared camera
+        )
+        camera_type = (
+            "PINHOLE"  # in the feedforward manner, we only support PINHOLE camera
+        )
+
+        image_size = np.array(
+            [mapanything_fixed_resolution, mapanything_fixed_resolution]
+        )
+        num_frames, height, width, _ = points_3d.shape
+
+        # Denormalize images before computing RGB values
+        points_rgb_images = F.interpolate(
+            images,
+            size=(mapanything_fixed_resolution, mapanything_fixed_resolution),
+            mode="bilinear",
+            align_corners=False,
+        )
+
+        # Convert normalized images back to RGB [0,1] range using the rgb function
+        points_rgb_list = []
+        for i in range(points_rgb_images.shape[0]):
+            # rgb function expects single image tensor and returns numpy array in [0,1] range
+            rgb_img = rgb(points_rgb_images[i], model.encoder.data_norm_type)
+            points_rgb_list.append(rgb_img)
+
+        # Stack and convert to uint8
+        points_rgb = np.stack(points_rgb_list)  # Shape: (N, H, W, 3)
+        points_rgb = (points_rgb * 255).astype(np.uint8)
+
+        # (S, H, W, 3), with x, y coordinates and frame indices
+        points_xyf = create_pixel_coordinate_grid(num_frames, height, width)
+
+        conf_mask = depth_conf >= conf_thres_value
+        # At most writing 100000 3d points to colmap reconstruction object
+        conf_mask = randomly_limit_trues(conf_mask, max_points_for_colmap)
+
+        points_3d = points_3d[conf_mask]
+        points_xyf = points_xyf[conf_mask]
+        points_rgb = points_rgb[conf_mask]
+
+        print("Converting to COLMAP format")
+        reconstruction = batch_np_matrix_to_pycolmap_wo_track(
+            points_3d,
+            points_xyf,
+            points_rgb,
+            extrinsic,
+            intrinsic,
+            image_size,
+            shared_camera=shared_camera,
+            camera_type=camera_type,
+        )
+
+        reconstruction_resolution = mapanything_fixed_resolution
         timings["reconstruction_without_ba"] = time.time() - t_start
 
     # Save reconstruction
     t_start = time.time()
-    # ...existing save code...
+    reconstruction = rename_colmap_recons_and_rescale_camera(
+        reconstruction,
+        base_image_path_list,
+        original_coords.cpu().numpy(),
+        img_size=reconstruction_resolution,
+        shift_point2d_to_original_res=True,
+        shared_camera=shared_camera,
+    )
+
+    # Save to output directory
+    output_reconstruction_path = os.path.join(args.out_dir, "reconstruction.json")
+    pycolmap.save_reconstruction(reconstruction, output_reconstruction_path)
+
+    print(f"Reconstruction saved to {output_reconstruction_path}")
     timings["save_reconstruction"] = time.time() - t_start
 
     if args.save_glb:
         t_start = time.time()
-        # ...existing GLB save code...
+        # Save as GLB file
+        glb_filename = os.path.join(args.out_dir, "reconstruction.glb")
+
+        # Use the first image's intrinsics for GLB export
+        glb_intrinsics = intrinsic[0]
+
+        # Convert reconstruction to mesh and save as GLB
+        mesh = predictions_to_glb(
+            reconstruction,
+            glb_filename,
+            images_list,
+            world_points_list,
+            masks_list,
+            glb_intrinsics,
+        )
         timings["save_glb"] = time.time() - t_start
 
     timings["total"] = time.time() - t_total_start
