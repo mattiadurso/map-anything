@@ -32,11 +32,13 @@ output_path = paths[dataset]["output_path"]
 scenes = sorted(os.listdir(f"{base_path}"))
 
 for scene in scenes:
+    out_dir = f"{output_path}/map_anything/{dataset.split('_')[0]}/{scene}"
+    os.makedirs(out_dir, exist_ok=True)
     os.system(
         f"python scripts/demo_colmap.py \
             --scene_dir {base_path}/{scene} \
             --images_dir {base_path}/{scene}/{images_path} \
-            --out_dir {output_path}/map_anything/{dataset}/{scene} \
+            --out_dir {out_dir} \
             --device cuda:7 \
     "
     )
