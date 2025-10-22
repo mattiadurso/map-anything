@@ -51,6 +51,25 @@ def parse_args():
         help="Directory containing the scene images",
     )
     parser.add_argument(
+        "--images_dir",
+        type=str,
+        default="images",
+        help="Subdirectory containing the images (relative to scene_dir)",
+    )
+
+    parser.add_argument(
+        "--out_dir",
+        type=str,
+        required=True,
+        help="Directory to save the outputs",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cuda",
+        help="Device to use for inference (e.g., 'cuda', 'cuda:0', 'cuda:6', 'cpu')",
+    )
+    parser.add_argument(
         "--seed", type=int, default=42, help="Random seed for reproducibility"
     )
     parser.add_argument(
@@ -380,7 +399,7 @@ def demo_fn(args):
     dtype = (
         torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
     )
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu"
     print(f"Using device: {device}")
     print(f"Using dtype: {dtype}")
 
@@ -390,11 +409,20 @@ def demo_fn(args):
     model.eval()
 
     # Get image paths and preprocess them
-    image_dir = os.path.join(args.scene_dir, "images")
-    image_path_list = glob.glob(os.path.join(image_dir, "*"))
-    if len(image_path_list) == 0:
+    image_dir = os.path.join(args.scene_dir, args.images_dir)
+    valid_extensions = ["jpg", "jpeg", "png", "JPG", "JPEG", "PNG"]
+    image_paths = []
+
+    for ext in valid_extensions:
+        # Search in root and one level deep
+        image_paths.extend(glob.glob(os.path.join(image_dir, f"*.{ext}")))
+        image_paths.extend(glob.glob(os.path.join(image_dir, "*", f"*.{ext}")))
+
+    # Remove duplicates and sort
+    image_paths = sorted(list(set(image_paths)))
+    if len(image_paths) == 0:
         raise ValueError(f"No images found in {image_dir}")
-    base_image_path_list = [os.path.basename(path) for path in image_path_list]
+    base_image_path_list = [os.path.basename(path) for path in image_paths]
 
     # Load images and original coordinates
     # Load Image in 1024, while running MapAnything with 518
@@ -402,7 +430,7 @@ def demo_fn(args):
     img_load_resolution = 1024
 
     images, original_coords = load_and_preprocess_images_square(
-        image_path_list, img_load_resolution, model.encoder.data_norm_type
+        image_paths, img_load_resolution, model.encoder.data_norm_type
     )
     images = images.to(device)
     original_coords = original_coords.to(device)
@@ -553,15 +581,15 @@ def demo_fn(args):
         shared_camera=shared_camera,
     )
 
-    print(f"Saving reconstruction to {args.scene_dir}/sparse")
-    sparse_reconstruction_dir = os.path.join(args.scene_dir, "sparse")
+    print(f"Saving reconstruction to {args.out_dir}/sparse")
+    sparse_reconstruction_dir = os.path.join(args.out_dir, "sparse")
     os.makedirs(sparse_reconstruction_dir, exist_ok=True)
     reconstruction.write(sparse_reconstruction_dir)
 
-    # Save point cloud for fast visualization
-    trimesh.PointCloud(points_3d, colors=points_rgb).export(
-        os.path.join(args.scene_dir, "sparse/points.ply")
-    )
+    # # Save point cloud for fast visualization
+    # trimesh.PointCloud(points_3d, colors=points_rgb).export(
+    #     os.path.join(args.out_dir, "sparse/points.ply")
+    # )
 
     # Export GLB if requested
     if args.save_glb:
