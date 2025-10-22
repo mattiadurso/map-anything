@@ -37,5 +37,6 @@ for scene in scenes:
             --scene_dir {base_path}/{scene} \
             --images_dir {base_path}/{scene}/{images_path} \
             --out_dir {output_path}/map_anything/{dataset}/{scene} \
+            --device cuda:7 \
     "
     )
