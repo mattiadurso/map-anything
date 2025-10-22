@@ -605,8 +605,9 @@ def demo_fn(args):
     )
 
     # Save to output directory
-    output_reconstruction_path = os.path.join(args.out_dir, "reconstruction.json")
-    pycolmap.write_txt(reconstruction, output_reconstruction_path)
+    output_reconstruction_path = os.path.join(args.out_dir, "sparse")
+    os.makedirs(output_reconstruction_path, exist_ok=True)
+    reconstruction.write_text(output_reconstruction_path)
 
     print(f"Reconstruction saved to {output_reconstruction_path}")
     timings["save_reconstruction"] = time.time() - t_start
