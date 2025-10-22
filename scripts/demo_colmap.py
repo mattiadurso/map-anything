@@ -438,6 +438,7 @@ def demo_fn(args):
 
     # Run MapAnything to estimate camera and depth
     # Run with 518 x 518 images
+    print("Running MapAnything inference ...")
     extrinsic, intrinsic, depth_map, depth_conf, points_3d, img_no_norm, masks = (
         run_mapanything(
             model,
@@ -448,6 +449,7 @@ def demo_fn(args):
             memory_efficient_inference=args.memory_efficient_inference,
         )
     )
+    print("MapAnything inference completed.")
 
     # Prepare lists for GLB export if needed
     world_points_list = []
@@ -515,7 +517,7 @@ def demo_fn(args):
         reconstruction_resolution = img_load_resolution
     else:
         conf_thres_value = args.conf_thres_value
-        max_points_for_colmap = 100000  # randomly sample 3D points
+        max_points_for_colmap = 100_000  # randomly sample 3D points
         shared_camera = (
             False  # in the feedforward manner, we do not support shared camera
         )
