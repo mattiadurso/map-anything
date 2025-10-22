@@ -426,7 +426,7 @@ def demo_fn(args):
         image_paths.extend(glob.glob(os.path.join(image_dir, "*", f"*.{ext}")))
 
     # Remove duplicates and sort
-    image_paths = sorted(list(set(image_paths)))[:10]
+    image_paths = sorted(list(set(image_paths)))
     if len(image_paths) == 0:
         raise ValueError(f"No images found in {image_dir}")
     base_image_path_list = [os.path.basename(path) for path in image_paths]
