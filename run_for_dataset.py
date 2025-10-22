@@ -10,7 +10,7 @@ paths = {
     "imc_orochi": {
         "base_path": "/data/mdurso/imc",
         "images_path": "set_100/images",
-        "output_path": "/data/mdurso/imc/results",
+        "output_path": "/data/mdurso/results",
     },
     "eth3d_local": {
         "base_path": "/home/mattia/Desktop/Repos/wrapper_factory/benchmarks_3D/eth3d",
