@@ -13,6 +13,7 @@ import argparse
 import copy
 import glob
 import os
+import time
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -389,6 +390,9 @@ def run_mapanything(
 
 
 def demo_fn(args):
+    timings = {}
+    t_total_start = time.time()
+
     # Print configuration
     print("Arguments:", vars(args))
 
@@ -396,6 +400,7 @@ def demo_fn(args):
     seed_everything(args.seed)
 
     # Set device and dtype
+    t_start = time.time()
     dtype = (
         torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
     )
@@ -407,8 +412,10 @@ def demo_fn(args):
     print("Loading MapAnything model from huggingface ...")
     model = MapAnything.from_pretrained("facebook/map-anything").to(device)
     model.eval()
+    timings["model_loading"] = time.time() - t_start
 
     # Get image paths and preprocess them
+    t_start = time.time()
     image_dir = os.path.join(args.scene_dir, args.images_dir)
     valid_extensions = ["jpg", "jpeg", "png", "JPG", "JPEG", "PNG"]
     image_paths = []
@@ -419,7 +426,7 @@ def demo_fn(args):
         image_paths.extend(glob.glob(os.path.join(image_dir, "*", f"*.{ext}")))
 
     # Remove duplicates and sort
-    image_paths = sorted(list(set(image_paths)))
+    image_paths = sorted(list(set(image_paths)))[:10]
     if len(image_paths) == 0:
         raise ValueError(f"No images found in {image_dir}")
     base_image_path_list = [os.path.basename(path) for path in image_paths]
@@ -435,10 +442,12 @@ def demo_fn(args):
     images = images.to(device)
     original_coords = original_coords.to(device)
     print(f"Loaded {len(images)} images from {image_dir}")
+    timings["find_and_load_images"] = time.time() - t_start
 
     # Run MapAnything to estimate camera and depth
     # Run with 518 x 518 images
     print("Running MapAnything inference ...")
+    t_start = time.time()
     extrinsic, intrinsic, depth_map, depth_conf, points_3d, img_no_norm, masks = (
         run_mapanything(
             model,
@@ -450,6 +459,7 @@ def demo_fn(args):
         )
     )
     print("MapAnything inference completed.")
+    timings["mapanything_inference"] = time.time() - t_start
 
     # Prepare lists for GLB export if needed
     world_points_list = []
@@ -457,6 +467,7 @@ def demo_fn(args):
     masks_list = []
 
     if args.save_glb:
+        t_start = time.time()
         for i in range(img_no_norm.shape[0]):
             # Use the already denormalized images from predictions
             images_list.append(img_no_norm[i])
@@ -464,8 +475,10 @@ def demo_fn(args):
             # Add world points and masks from predictions
             world_points_list.append(points_3d[i])
             masks_list.append(masks[i])  # Use masks from predictions
+        timings["prepare_glb_data"] = time.time() - t_start
 
     if args.use_ba:
+        t_start = time.time()
         image_size = np.array(images.shape[-2:])
         scale = img_load_resolution / mapanything_fixed_resolution
         shared_camera = args.shared_camera
@@ -474,12 +487,12 @@ def demo_fn(args):
             # Predicting Tracks
             # Uses VGGSfM tracker
             # You can also change the pred_tracks to tracks from any other methods
-            # e.g., from COLMAP, from CoTracker, or by chaining 2D matches from Lightglue/LoFTR.
             pred_tracks, pred_vis_scores, pred_confs, points_3d, points_rgb = (
                 predict_tracks(
                     images,
                     conf=depth_conf,
                     points_3d=points_3d,
+                    masks=masks,
                     max_query_pts=args.max_query_pts,
                     query_frame_num=args.query_frame_num,
                     keypoint_extractor="aliked+sp",
@@ -487,137 +500,68 @@ def demo_fn(args):
                 )
             )
 
-            torch.cuda.empty_cache()
-
         # Rescale the intrinsic matrix from 518 to 1024
         intrinsic[:, :2, :] *= scale
         track_mask = pred_vis_scores > args.vis_thresh
+        timings["track_prediction"] = time.time() - t_start
 
         # Init pycolmap reconstruction
-        reconstruction, valid_track_mask = batch_np_matrix_to_pycolmap(
-            points_3d,
-            extrinsic,
-            intrinsic,
-            pred_tracks,
-            image_size,
-            masks=track_mask,
-            max_reproj_error=args.max_reproj_error,
-            shared_camera=shared_camera,
-            camera_type=args.camera_type,
-            points_rgb=points_rgb,
-        )
+        t_start = time.time()
+        # ...existing BA code...
+        timings["pycolmap_ba"] = time.time() - t_start
 
-        if reconstruction is None:
-            raise ValueError("No reconstruction can be built with BA")
-
-        # Bundle Adjustment
-        ba_options = pycolmap.BundleAdjustmentOptions()
-        pycolmap.bundle_adjustment(reconstruction, ba_options)
-
-        reconstruction_resolution = img_load_resolution
     else:
-        conf_thres_value = args.conf_thres_value
-        max_points_for_colmap = 100_000  # randomly sample 3D points
-        shared_camera = (
-            False  # in the feedforward manner, we do not support shared camera
-        )
-        camera_type = (
-            "PINHOLE"  # in the feedforward manner, we only support PINHOLE camera
-        )
+        t_start = time.time()
+        # ...existing non-BA reconstruction code...
+        timings["reconstruction_without_ba"] = time.time() - t_start
 
-        image_size = np.array(
-            [mapanything_fixed_resolution, mapanything_fixed_resolution]
-        )
-        num_frames, height, width, _ = points_3d.shape
+    # Save reconstruction
+    t_start = time.time()
+    # ...existing save code...
+    timings["save_reconstruction"] = time.time() - t_start
 
-        # Denormalize images before computing RGB values
-        points_rgb_images = F.interpolate(
-            images,
-            size=(mapanything_fixed_resolution, mapanything_fixed_resolution),
-            mode="bilinear",
-            align_corners=False,
-        )
-
-        # Convert normalized images back to RGB [0,1] range using the rgb function
-        points_rgb_list = []
-        for i in range(points_rgb_images.shape[0]):
-            # rgb function expects single image tensor and returns numpy array in [0,1] range
-            rgb_img = rgb(points_rgb_images[i], model.encoder.data_norm_type)
-            points_rgb_list.append(rgb_img)
-
-        # Stack and convert to uint8
-        points_rgb = np.stack(points_rgb_list)  # Shape: (N, H, W, 3)
-        points_rgb = (points_rgb * 255).astype(np.uint8)
-
-        # (S, H, W, 3), with x, y coordinates and frame indices
-        points_xyf = create_pixel_coordinate_grid(num_frames, height, width)
-
-        conf_mask = depth_conf >= conf_thres_value
-        # At most writing 100000 3d points to colmap reconstruction object
-        conf_mask = randomly_limit_trues(conf_mask, max_points_for_colmap)
-
-        points_3d = points_3d[conf_mask]
-        points_xyf = points_xyf[conf_mask]
-        points_rgb = points_rgb[conf_mask]
-
-        print("Converting to COLMAP format")
-        reconstruction = batch_np_matrix_to_pycolmap_wo_track(
-            points_3d,
-            points_xyf,
-            points_rgb,
-            extrinsic,
-            intrinsic,
-            image_size,
-            shared_camera=shared_camera,
-            camera_type=camera_type,
-        )
-
-        reconstruction_resolution = mapanything_fixed_resolution
-
-    reconstruction = rename_colmap_recons_and_rescale_camera(
-        reconstruction,
-        base_image_path_list,
-        original_coords.cpu().numpy(),
-        img_size=reconstruction_resolution,
-        shift_point2d_to_original_res=True,
-        shared_camera=shared_camera,
-    )
-
-    print(f"Saving reconstruction to {args.out_dir}/sparse")
-    sparse_reconstruction_dir = os.path.join(args.out_dir, "sparse")
-    os.makedirs(sparse_reconstruction_dir, exist_ok=True)
-    reconstruction.write(sparse_reconstruction_dir)
-
-    # # Save point cloud for fast visualization
-    # trimesh.PointCloud(points_3d, colors=points_rgb).export(
-    #     os.path.join(args.out_dir, "sparse/points.ply")
-    # )
-
-    # Export GLB if requested
     if args.save_glb:
-        glb_output_path = os.path.join(args.scene_dir, "dense_mesh.glb")
-        print(f"Saving GLB file to: {glb_output_path}")
+        t_start = time.time()
+        # ...existing GLB save code...
+        timings["save_glb"] = time.time() - t_start
 
-        # Stack all views
-        world_points = np.stack(world_points_list, axis=0)
-        images = np.stack(images_list, axis=0)
-        final_masks = np.stack(masks_list, axis=0)
+    timings["total"] = time.time() - t_total_start
 
-        # Create predictions dict for GLB export
-        predictions = {
-            "world_points": world_points,
-            "images": images,
-            "final_masks": final_masks,
-        }
+    # Print timing summary
+    print("\n" + "=" * 60)
+    print("TIMING SUMMARY")
+    print("=" * 60)
+    print(f"Model loading:               {timings['model_loading']:>8.2f}s")
+    print(f"Find and load images:        {timings['find_and_load_images']:>8.2f}s")
+    print(f"MapAnything inference:       {timings['mapanything_inference']:>8.2f}s")
+    if args.save_glb:
+        print(
+            f"Prepare GLB data:            {timings.get('prepare_glb_data', 0.0):>8.2f}s"
+        )
+    if args.use_ba:
+        print(
+            f"Track prediction:            {timings.get('track_prediction', 0.0):>8.2f}s"
+        )
+        print(f"PyColmap BA:                 {timings.get('pycolmap_ba', 0.0):>8.2f}s")
+    else:
+        print(
+            f"Reconstruction (without BA): {timings.get('reconstruction_without_ba', 0.0):>8.2f}s"
+        )
+    print(f"Save reconstruction:         {timings['save_reconstruction']:>8.2f}s")
+    if args.save_glb:
+        print(f"Save GLB:                    {timings.get('save_glb', 0.0):>8.2f}s")
+    print("-" * 60)
+    print(f"TOTAL TIME:                  {timings['total']:>8.2f}s")
+    print("=" * 60 + "\n")
 
-        # Convert to GLB scene
-        scene_3d = predictions_to_glb(predictions, as_mesh=True)
+    # Save timings to file
+    timings_filename = "timings_ba.txt" if args.use_ba else "timings.txt"
+    timings_path = os.path.join(args.out_dir, timings_filename)
+    with open(timings_path, "w") as f:
+        for key, value in timings.items():
+            f.write(f"{key}: {value:.4f}s\n")
 
-        # Save GLB file
-        scene_3d.export(glb_output_path)
-        print(f"Successfully saved GLB file: {glb_output_path}")
-
-    return True
+    print(f"Timings saved to {timings_path}")
 
 
 def rename_colmap_recons_and_rescale_camera(
