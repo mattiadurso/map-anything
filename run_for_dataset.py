@@ -20,12 +20,12 @@ paths = {
     "eth3d_orochi": {
         "base_path": "/data/mdurso/eth3d",
         "images_path": "images_by_k",
-        "output_path": "/data/mdurso/eth3d/results",
+        "output_path": "/data/mdurso/results",
     },
 }
 
 
-dataset = "imc_orochi"
+dataset = "eth3d_orochi"
 base_path = paths[dataset]["base_path"]
 images_path = paths[dataset]["images_path"]
 output_path = paths[dataset]["output_path"]
