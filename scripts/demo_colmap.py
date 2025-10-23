@@ -20,6 +20,11 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 import numpy as np
 import pycolmap
 import torch
+
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.enabled = True  # keep CuDNN on
+
 import torch.nn.functional as F
 import trimesh
 from PIL import Image
