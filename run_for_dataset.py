@@ -38,7 +38,7 @@ for scene in scenes:
         f"python scripts/demo_colmap.py \
             --scene_dir {base_path}/{scene} \
             --images_dir {base_path}/{scene}/{images_path} \
-            --out_dir {out_dir} \
+            --output_dir {out_dir} \
             --device cuda:7 \
     "
     )
