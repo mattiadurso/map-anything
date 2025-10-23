@@ -66,7 +66,7 @@ def parse_args():
     parser.add_argument(
         "--device",
         type=str,
-        default="cuda:0",
+        default="cuda",
         help="Device to run the model on",
     )
     parser.add_argument(
