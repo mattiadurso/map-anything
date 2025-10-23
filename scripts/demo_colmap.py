@@ -10,10 +10,10 @@ Reference: VGGT (https://github.com/facebookresearch/vggt/blob/main/demo_colmap.
 """
 
 import argparse
+import time
 import copy
 import glob
 import os
-import time
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -55,20 +55,13 @@ def parse_args():
         "--images_dir",
         type=str,
         default="images",
-        help="Subdirectory containing the images (relative to scene_dir)",
+        help="Directory containing the images",
     )
-
     parser.add_argument(
-        "--out_dir",
+        "--output_dir",
         type=str,
         required=True,
-        help="Directory to save the outputs",
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="cuda",
-        help="Device to use for inference (e.g., 'cuda', 'cuda:0', 'cuda:6', 'cpu')",
+        help="Output directory to save results",
     )
     parser.add_argument(
         "--seed", type=int, default=42, help="Random seed for reproducibility"
@@ -391,7 +384,7 @@ def run_mapanything(
 
 def demo_fn(args):
     timings = {}
-    t_total_start = time.time()
+    start_time = time.time()
 
     # Print configuration
     print("Arguments:", vars(args))
@@ -400,36 +393,30 @@ def demo_fn(args):
     seed_everything(args.seed)
 
     # Set device and dtype
-    t_start = time.time()
     dtype = (
         torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
     )
-    device = args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
     print(f"Using dtype: {dtype}")
 
     # Init model
+    s_time = time.time()
     print("Loading MapAnything model from huggingface ...")
     model = MapAnything.from_pretrained("facebook/map-anything").to(device)
     model.eval()
-    timings["model_loading"] = time.time() - t_start
+    timings["model_load_time"] = time.time() - s_time
 
     # Get image paths and preprocess them
-    t_start = time.time()
+    s_time = time.time()
     image_dir = os.path.join(args.scene_dir, args.images_dir)
-    valid_extensions = ["jpg", "jpeg", "png", "JPG", "JPEG", "PNG"]
-    image_paths = []
-
-    for ext in valid_extensions:
-        # Search in root and one level deep
-        image_paths.extend(glob.glob(os.path.join(image_dir, f"*.{ext}")))
-        image_paths.extend(glob.glob(os.path.join(image_dir, "*", f"*.{ext}")))
-
-    # Remove duplicates and sort
-    image_paths = sorted(list(set(image_paths)))
-    if len(image_paths) == 0:
+    image_path_list = glob.glob(os.path.join(image_dir, "*"))
+    if len(image_path_list) == 0:
         raise ValueError(f"No images found in {image_dir}")
-    base_image_path_list = [os.path.basename(path) for path in image_paths]
+    # base_image_path_list = [os.path.basename(path) for path in image_path_list]
+    base_image_path_list = [
+        os.path.relpath(path, start=image_dir) for path in image_path_list
+    ]
 
     # Load images and original coordinates
     # Load Image in 1024, while running MapAnything with 518
@@ -437,17 +424,16 @@ def demo_fn(args):
     img_load_resolution = 1024
 
     images, original_coords = load_and_preprocess_images_square(
-        image_paths, img_load_resolution, model.encoder.data_norm_type
+        image_path_list, img_load_resolution, model.encoder.data_norm_type
     )
     images = images.to(device)
     original_coords = original_coords.to(device)
     print(f"Loaded {len(images)} images from {image_dir}")
-    timings["find_and_load_images"] = time.time() - t_start
+    timings["image_load_time"] = time.time() - s_time
 
     # Run MapAnything to estimate camera and depth
     # Run with 518 x 518 images
-    print("Running MapAnything inference ...")
-    t_start = time.time()
+    s_time = time.time()
     extrinsic, intrinsic, depth_map, depth_conf, points_3d, img_no_norm, masks = (
         run_mapanything(
             model,
@@ -458,16 +444,13 @@ def demo_fn(args):
             memory_efficient_inference=args.memory_efficient_inference,
         )
     )
-    print("MapAnything inference completed.")
-    timings["mapanything_inference"] = time.time() - t_start
-
+    timings["inference_time"] = time.time() - s_time
     # Prepare lists for GLB export if needed
     world_points_list = []
     images_list = []
     masks_list = []
 
     if args.save_glb:
-        t_start = time.time()
         for i in range(img_no_norm.shape[0]):
             # Use the already denormalized images from predictions
             images_list.append(img_no_norm[i])
@@ -475,10 +458,9 @@ def demo_fn(args):
             # Add world points and masks from predictions
             world_points_list.append(points_3d[i])
             masks_list.append(masks[i])  # Use masks from predictions
-        timings["prepare_glb_data"] = time.time() - t_start
 
+    s_time = time.time()
     if args.use_ba:
-        t_start = time.time()
         image_size = np.array(images.shape[-2:])
         scale = img_load_resolution / mapanything_fixed_resolution
         shared_camera = args.shared_camera
@@ -487,12 +469,12 @@ def demo_fn(args):
             # Predicting Tracks
             # Uses VGGSfM tracker
             # You can also change the pred_tracks to tracks from any other methods
+            # e.g., from COLMAP, from CoTracker, or by chaining 2D matches from Lightglue/LoFTR.
             pred_tracks, pred_vis_scores, pred_confs, points_3d, points_rgb = (
                 predict_tracks(
                     images,
                     conf=depth_conf,
                     points_3d=points_3d,
-                    masks=masks,
                     max_query_pts=args.max_query_pts,
                     query_frame_num=args.query_frame_num,
                     keypoint_extractor="aliked+sp",
@@ -500,14 +482,13 @@ def demo_fn(args):
                 )
             )
 
+            torch.cuda.empty_cache()
+
         # Rescale the intrinsic matrix from 518 to 1024
         intrinsic[:, :2, :] *= scale
         track_mask = pred_vis_scores > args.vis_thresh
-        timings["track_prediction"] = time.time() - t_start
 
         # Init pycolmap reconstruction
-        t_start = time.time()
-        print("Converting to COLMAP format with BA...")
         reconstruction, valid_track_mask = batch_np_matrix_to_pycolmap(
             points_3d,
             extrinsic,
@@ -525,15 +506,12 @@ def demo_fn(args):
             raise ValueError("No reconstruction can be built with BA")
 
         # Bundle Adjustment
-        print("Running Bundle Adjustment...")
         ba_options = pycolmap.BundleAdjustmentOptions()
         pycolmap.bundle_adjustment(reconstruction, ba_options)
 
         reconstruction_resolution = img_load_resolution
-        timings["pycolmap_ba"] = time.time() - t_start
-
+        timings["reconstruction (with BA)"] = time.time() - s_time
     else:
-        t_start = time.time()
         conf_thres_value = args.conf_thres_value
         max_points_for_colmap = 100000  # randomly sample 3D points
         shared_camera = (
@@ -591,10 +569,9 @@ def demo_fn(args):
         )
 
         reconstruction_resolution = mapanything_fixed_resolution
-        timings["reconstruction_without_ba"] = time.time() - t_start
+        timings["reconstruction (no BA)"] = time.time() - s_time
 
-    # Save reconstruction
-    t_start = time.time()
+    s_time = time.time()
     reconstruction = rename_colmap_recons_and_rescale_camera(
         reconstruction,
         base_image_path_list,
@@ -603,71 +580,60 @@ def demo_fn(args):
         shift_point2d_to_original_res=True,
         shared_camera=shared_camera,
     )
+    timings["rescale_and_rename_time"] = time.time() - s_time
 
-    # Save to output directory
-    output_reconstruction_path = os.path.join(args.out_dir, "sparse")
-    os.makedirs(output_reconstruction_path, exist_ok=True)
-    reconstruction.write_text(output_reconstruction_path)
+    s_time = time.time()
+    ba = "ba" if args.use_ba else "no_ba"
+    print(f"Saving reconstruction to {args.output_dir}/sparse_{ba}")
+    sparse_reconstruction_dir = os.path.join(args.output_dir, f"sparse_{ba}")
+    os.makedirs(sparse_reconstruction_dir, exist_ok=True)
+    reconstruction.write_text(sparse_reconstruction_dir)
+    timings["save_reconstruction_time"] = time.time() - s_time
 
-    print(f"Reconstruction saved to {output_reconstruction_path}")
-    timings["save_reconstruction"] = time.time() - t_start
+    # # Save point cloud for fast visualization
+    # trimesh.PointCloud(points_3d, colors=points_rgb).export(
+    #     os.path.join(args.scene_dir, "sparse/points.ply")
+    # )
 
-    if args.save_glb:
-        t_start = time.time()
-        # Save as GLB file
-        glb_filename = os.path.join(args.out_dir, "reconstruction.glb")
+    # # Export GLB if requested
+    # if args.save_glb:
+    #     glb_output_path = os.path.join(args.scene_dir, "dense_mesh.glb")
+    #     print(f"Saving GLB file to: {glb_output_path}")
 
-        # Use the first image's intrinsics for GLB export
-        glb_intrinsics = intrinsic[0]
+    #     # Stack all views
+    #     world_points = np.stack(world_points_list, axis=0)
+    #     images = np.stack(images_list, axis=0)
+    #     final_masks = np.stack(masks_list, axis=0)
 
-        # Convert reconstruction to mesh and save as GLB
-        mesh = predictions_to_glb(
-            reconstruction,
-            glb_filename,
-            images_list,
-            world_points_list,
-            masks_list,
-            glb_intrinsics,
-        )
-        timings["save_glb"] = time.time() - t_start
+    #     # Create predictions dict for GLB export
+    #     predictions = {
+    #         "world_points": world_points,
+    #         "images": images,
+    #         "final_masks": final_masks,
+    #     }
 
-    timings["total"] = time.time() - t_total_start
+    #     # Convert to GLB scene
+    #     scene_3d = predictions_to_glb(predictions, as_mesh=True)
 
-    # Print timing summary
-    print("\n" + "=" * 60)
-    print("TIMING SUMMARY")
-    print("=" * 60)
-    print(f"Model loading:               {timings['model_loading']:>8.2f}s")
-    print(f"Find and load images:        {timings['find_and_load_images']:>8.2f}s")
-    print(f"MapAnything inference:       {timings['mapanything_inference']:>8.2f}s")
-    if args.save_glb:
-        print(
-            f"Prepare GLB data:            {timings.get('prepare_glb_data', 0.0):>8.2f}s"
-        )
-    if args.use_ba:
-        print(
-            f"Track prediction:            {timings.get('track_prediction', 0.0):>8.2f}s"
-        )
-        print(f"PyColmap BA:                 {timings.get('pycolmap_ba', 0.0):>8.2f}s")
-    else:
-        print(
-            f"Reconstruction (without BA): {timings.get('reconstruction_without_ba', 0.0):>8.2f}s"
-        )
-    print(f"Save reconstruction:         {timings['save_reconstruction']:>8.2f}s")
-    if args.save_glb:
-        print(f"Save GLB:                    {timings.get('save_glb', 0.0):>8.2f}s")
-    print("-" * 60)
-    print(f"TOTAL TIME:                  {timings['total']:>8.2f}s")
-    print("=" * 60 + "\n")
+    #     # Save GLB file
+    #     scene_3d.export(glb_output_path)
+    #     print(f"Successfully saved GLB file: {glb_output_path}")
 
-    # Save timings to file
-    timings_filename = "timings_ba.txt" if args.use_ba else "timings.txt"
-    timings_path = os.path.join(args.out_dir, timings_filename)
-    with open(timings_path, "w") as f:
-        for key, value in timings.items():
-            f.write(f"{key}: {value:.4f}s\n")
+    timings["total_time"] = time.time() - start_time
+    print("\nTiming Summary:")
+    print("=" * 20)
+    for k, v in timings.items():
+        if k == "total_time":
+            print("=" * 20)
+        print(f"{k:<30}: {v:.2f} s")
+    print("=" * 20)
 
-    print(f"Timings saved to {timings_path}")
+    # write in a txt in the output dir
+    with open(os.path.join(args.output_dir, "timings.txt"), "w") as f:
+        for k, v in timings.items():
+            f.write(f"{k}: {v:.2f} s\n")
+
+    return True
 
 
 def rename_colmap_recons_and_rescale_camera(
