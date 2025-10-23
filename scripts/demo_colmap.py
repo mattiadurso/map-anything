@@ -416,11 +416,20 @@ def demo_fn(args):
     # Get image paths and preprocess them
     s_time = time.time()
     image_dir = os.path.join(args.scene_dir, args.images_dir)
-    image_path_list = glob.glob(os.path.join(image_dir, "*")) + glob.glob(
-        os.path.join(image_dir, "*", "*")
-    )
+
+    valid_extensions = ["jpg", "jpeg", "png", "JPG", "JPEG", "PNG"]
+    image_path_list = []
+
+    for ext in valid_extensions:
+        # Search in root and one level deep
+        image_path_list.extend(glob.glob(os.path.join(image_dir, f"*.{ext}")))
+        image_path_list.extend(glob.glob(os.path.join(image_dir, "*", f"*.{ext}")))
+
+    # Remove duplicates and sort
+    image_path_list = sorted(list(set(image_path_list)))
     if len(image_path_list) == 0:
         raise ValueError(f"No images found in {image_dir}")
+
     # base_image_path_list = [os.path.basename(path) for path in image_path_list]
     base_image_path_list = [
         os.path.relpath(path, start=image_dir) for path in image_path_list
