@@ -416,7 +416,9 @@ def demo_fn(args):
     # Get image paths and preprocess them
     s_time = time.time()
     image_dir = os.path.join(args.scene_dir, args.images_dir)
-    image_path_list = glob.glob(os.path.join(image_dir, "*"))
+    image_path_list = glob.glob(os.path.join(image_dir, "*")) + glob.glob(
+        os.path.join(image_dir, "*", "*")
+    )
     if len(image_path_list) == 0:
         raise ValueError(f"No images found in {image_dir}")
     # base_image_path_list = [os.path.basename(path) for path in image_path_list]
