@@ -20,7 +20,4 @@ module load anaconda                     # Or use a custom conda setup
 # Activate your conda environment
 source activate vggt
 
-# Activate your conda environment
-source activate vggt
-
 python run_for_dataset.py 
