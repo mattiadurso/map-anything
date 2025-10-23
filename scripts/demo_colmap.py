@@ -64,6 +64,12 @@ def parse_args():
         help="Output directory to save results",
     )
     parser.add_argument(
+        "--device",
+        type=str,
+        default="cuda:0",
+        help="Device to run the model on",
+    )
+    parser.add_argument(
         "--seed", type=int, default=42, help="Random seed for reproducibility"
     )
     parser.add_argument(
@@ -396,7 +402,7 @@ def demo_fn(args):
     dtype = (
         torch.bfloat16 if torch.cuda.get_device_capability()[0] >= 8 else torch.float16
     )
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = args.device if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
     print(f"Using dtype: {dtype}")
 
