@@ -39,8 +39,7 @@ for scene in scenes:
             --scene_dir {base_path}/{scene} \
             --images_dir {base_path}/{scene}/{images_path} \
             --output_dir {out_dir} \
-            --device cuda:7 \
-    "
+            "
     )
 
 dataset = "imc_orochi"
@@ -57,7 +56,6 @@ for scene in scenes:
             --scene_dir {base_path}/{scene} \
             --images_dir {base_path}/{scene}/{images_path} \
             --output_dir {out_dir} \
-            --device cuda:7 \
             --use_ba \
     "
     )
@@ -77,7 +75,6 @@ for scene in scenes:
             --scene_dir {base_path}/{scene} \
             --images_dir {base_path}/{scene}/{images_path} \
             --output_dir {out_dir} \
-            --device cuda:7 \
             --use_ba \
     "
     )
