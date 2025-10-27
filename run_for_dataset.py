@@ -26,7 +26,7 @@ paths = {
 
 
 # device
-device = "cuda:7" if torch.cuda.is_available() else "cpu"
+device = "cuda:4" if torch.cuda.is_available() else "cpu"
 x = torch.rand(1).to(device)
 
 
