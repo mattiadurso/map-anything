@@ -600,9 +600,9 @@ def demo_fn(args):
     timings["rescale_and_rename_time"] = time.time() - s_time
 
     s_time = time.time()
-    ba = "ba" if args.use_ba else "no_ba"
-    print(f"Saving reconstruction to {args.output_dir}/sparse_{ba}")
-    sparse_reconstruction_dir = os.path.join(args.output_dir, f"sparse_{ba}")
+    ba = "_ba" if args.use_ba else ""
+    print(f"Saving reconstruction to {args.output_dir}/sparse{ba}")
+    sparse_reconstruction_dir = os.path.join(args.output_dir, f"sparse{ba}")
     os.makedirs(sparse_reconstruction_dir, exist_ok=True)
     reconstruction.write_text(sparse_reconstruction_dir)
     timings["save_reconstruction_time"] = time.time() - s_time
