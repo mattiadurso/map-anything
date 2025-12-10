@@ -12,6 +12,9 @@ from functools import partial
 from typing import Any, Callable, Dict, List, Tuple, Type, Union
 
 import torch
+
+torch.backends.cudnn.benchmark = False
+torch.backends.cudnn.deterministic = True
 import torch.nn as nn
 from huggingface_hub import PyTorchModelHubMixin
 

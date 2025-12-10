@@ -47,6 +47,11 @@ scenes = sorted(os.listdir(f"{base_path}"))
 
 for scene in scenes:
     out_dir = f"{output_path}/map_anything/{dataset.split('_')[0]}/{scene}"
+
+    if os.path.exists(os.path.join(out_dir, "sparse")):
+        print(f"Skipping {scene} because output dir already exists")
+        continue
+
     os.makedirs(out_dir, exist_ok=True)
     os.system(
         f"python scripts/demo_colmap.py \
