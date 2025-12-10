@@ -38,8 +38,6 @@ paths = {
 # device
 cuda_id = 7
 device = f"cuda:{cuda_id}" if torch.cuda.is_available() else "cpu"
-x = torch.rand(1).to(device)
-
 
 dataset = "terrasky3D_orochi"
 base_path = paths[dataset]["base_path"]
