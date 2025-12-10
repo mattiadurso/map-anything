@@ -54,6 +54,7 @@ for scene in scenes:
             --images_dir {base_path}/{scene}/{images_path} \
             --output_dir {out_dir} \
             --device {device} \
+            --memory_efficient_inference \
     "
         #       --use_ba \
     )
