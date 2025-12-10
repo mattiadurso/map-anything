@@ -41,6 +41,8 @@ from uniception.models.encoders.image_normalizations import IMAGE_NORMALIZATION_
 torch.backends.cudnn.enabled = False
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic = False
+torch.backends.cuda.matmul.allow_tf32 = False
+torch.backends.cudnn.allow_tf32 = False
 
 
 def parse_args():
