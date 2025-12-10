@@ -38,7 +38,7 @@ from mapanything.utils.viz import predictions_to_glb
 from uniception.models.encoders.image_normalizations import IMAGE_NORMALIZATION_DICT
 
 # Configure CUDA settings
-torch.backends.cudnn.enabled = True
+torch.backends.cudnn.enabled = False
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic = False
 
